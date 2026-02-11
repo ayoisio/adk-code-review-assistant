@@ -1,0 +1,508 @@
+manifest:
+  version: "0.1.3"
+  schema: https://a2as.org/cert/schema
+  subject:
+    name: ayoisio/adk-code-review-assistant
+    source: https://github.com/ayoisio/adk-code-review-assistant
+    branch: main
+    commit: "515541d1"
+    scope: [code_review_assistant/__init__.py, code_review_assistant/agent.py, code_review_assistant/agent_engine_app.py,
+      code_review_assistant/config.py, code_review_assistant/sub_agents/__init__.py, code_review_assistant/sub_agents/fix_pipeline/__init__.py,
+      code_review_assistant/sub_agents/fix_pipeline/code_fixer.py, code_review_assistant/sub_agents/fix_pipeline/fix_synthesizer.py,
+      code_review_assistant/sub_agents/fix_pipeline/fix_test_runner.py, code_review_assistant/sub_agents/fix_pipeline/fix_validator.py,
+      code_review_assistant/sub_agents/review_pipeline/__init__.py, code_review_assistant/sub_agents/review_pipeline/code_analyzer.py,
+      code_review_assistant/sub_agents/review_pipeline/feedback_synthesizer.py, code_review_assistant/sub_agents/review_pipeline/style_checker.py,
+      code_review_assistant/sub_agents/review_pipeline/test_runner.py, code_review_assistant/tools.py]
+  issued:
+    by: A2AS.org
+    at: '2026-02-11T16:43:47Z'
+    url: https://a2as.org/certified/agents/ayoisio/adk-code-review-assistant
+  signatures:
+    digest: sha256:H-2uSqECrAfsC4R8ViGEvWdI48U_xbQ_Q-CT-Ya7O7c
+    key: ed25519:de8XpGQbYZfO5gzXMTEFu2TBduYheWfkEwykK6lYMug
+    sig: ed25519:dmlKWAOdyEcUIM0iyXXZ-iy0D8bT-WQ25XupWZXO8pIa1J2_43e2UvnFhOgHzsC9lb1rQihb7Qz34-OJUF6IBw
+
+agents:
+  code_analyzer_agent:
+    type: instance
+    models: [config.worker_model]
+    tools: [analyze_code_structure]
+    params:
+      name: CodeAnalyzer
+      description: Analyzes Python code structure and identifies components
+      instruction: [You are a code analysis specialist responsible for understanding code structure., 'Your task:', 1. Take
+          the code submitted by the user (it will be provided in the user message), 2. Use the analyze_code_structure tool
+          to parse and analyze it, '3. Pass the EXACT code to your tool - do not modify, fix, or "improve" it', '4. Identify
+          all functions, classes, imports, and structural patterns', 5. Note any syntax errors or structural issues, 6. Store
+          the analysis in state for other agents to use, 'CRITICAL:', '- Pass the code EXACTLY as provided to the analyze_code_structure
+          tool', '- Do not fix syntax errors, even if obvious', '- Do not add missing imports or fix indentation', '- The
+          goal is to analyze what IS there, not what SHOULD be there', 'When calling the tool, pass the code as a string to
+          the ''code'' parameter.', 'If the analysis fails due to syntax errors, clearly report the error location and type.',
+        'Provide a clear summary including:', '- Number of functions and classes found', '- Key structural observations',
+        '- Any syntax errors or issues detected', '- Overall code organization assessment']
+      output_key: structure_analysis_summary
+  code_fix_pipeline:
+    type: instance
+    params:
+      name: CodeFixPipeline
+      description: Automated code fixing pipeline with iterative validation
+      sub_agents: [fix_attempt_loop, fix_synthesizer_agent]
+  code_fixer_agent:
+    type: instance
+    models: [config.worker_model]
+    params:
+      name: CodeFixer
+      description: Generates comprehensive fixes for all identified code issues
+      instruction: code_fixer_instruction_provider
+      code_executor: BuiltInCodeExecutor
+      output_key: code_fixes
+  code_review_pipeline:
+    type: instance
+    params:
+      name: CodeReviewPipeline
+      description: Complete code review pipeline with analysis, testing, and feedback
+      sub_agents: [code_analyzer_agent, style_checker_agent, test_runner_agent, feedback_synthesizer_agent]
+  feedback_synthesizer_agent:
+    type: instance
+    models: [gemini-2.5-pro]
+    tools: [search_past_feedback, update_grading_progress, save_grading_report]
+    params:
+      name: FeedbackSynthesizer
+      description: Synthesizes all analysis into constructive, personalized feedback
+      instruction: feedback_instruction_provider
+      output_key: final_feedback
+  fix_attempt_loop:
+    type: instance
+    params:
+      name: FixAttemptLoop
+      max_iterations: "3"
+      sub_agents: [code_fixer_agent, fix_test_runner_agent, fix_validator_agent]
+  fix_synthesizer_agent:
+    type: instance
+    models: [gemini-2.5-pro]
+    tools: [save_fix_report]
+    params:
+      name: FixSynthesizer
+      description: Creates comprehensive user-friendly fix report
+      instruction: fix_synthesizer_instruction_provider
+      output_key: fix_summary
+  fix_test_runner_agent:
+    type: instance
+    models: [gemini-2.5-flash]
+    params:
+      name: FixTestRunner
+      description: Runs comprehensive tests on fixed code to verify all issues are resolved
+      instruction: fix_test_runner_instruction_provider
+      code_executor: BuiltInCodeExecutor
+      output_key: fix_test_execution_summary
+  fix_validator_agent:
+    type: instance
+    models: [config.worker_model]
+    tools: [validate_fixed_style, compile_fix_report, exit_fix_loop]
+    params:
+      name: FixValidator
+      description: Validates fixes and generates final fix report
+      instruction: fix_validator_instruction_provider
+      output_key: final_fix_report
+  root_agent:
+    type: instance
+    models: [gemini-2.5-flash]
+    params:
+      name: CodeReviewAssistant
+      description: An intelligent code review assistant that analyzes Python code and provides educational feedback
+      instruction: [You are a specialized Python code review assistant focused on helping developers improve their code quality.,
+        'When a user provides Python code for review:', 1. Immediately delegate to CodeReviewPipeline and pass the code EXACTLY
+          as it was provided by the user., 2. The pipeline will handle all analysis and feedback, 3. Return ONLY the final
+          feedback from the pipeline - do not add any commentary, 'After completing a review, if significant issues were identified:',
+        '- If style score < 100 OR tests are failing OR critical issues exist:', '* Add at the end: "', '**💡 I can fix these
+          issues for you. Would you like me to do that?**"', '- If the user responds yes or requests fixes:', '* Delegate
+          to CodeFixPipeline', '* Return the fix pipeline''s complete output AS-IS', 'When a user asks what you can do or
+          general questions:', '- Explain your capabilities for code review and fixing', '- Do NOT trigger the pipeline for
+          non-code messages', The pipelines handle everything for code review and fixing - just pass through their final output.]
+      output_key: assistant_response
+      sub_agents: [code_review_pipeline, code_fix_pipeline]
+  style_checker_agent:
+    type: instance
+    models: [gemini-2.5-flash]
+    tools: [check_code_style]
+    params:
+      name: StyleChecker
+      description: Checks Python code style against PEP 8 guidelines
+      instruction: style_checker_instruction_provider
+      output_key: style_check_summary
+  test_runner_agent:
+    type: instance
+    models: [config.worker_model]
+    params:
+      name: TestRunner
+      description: Generates and runs tests for Python code using safe code execution
+      instruction: test_runner_instruction_provider
+      code_executor: BuiltInCodeExecutor
+      output_key: test_execution_summary
+
+models:
+  config.worker_model:
+    type: literal
+    agents: [test_runner_agent, code_fixer_agent, code_analyzer_agent, fix_validator_agent]
+  gemini-2.5-flash:
+    type: literal
+    agents: [style_checker_agent, root_agent, fix_test_runner_agent]
+  gemini-2.5-pro:
+    type: literal
+    agents: [fix_synthesizer_agent, feedback_synthesizer_agent]
+
+tools:
+  analyze_code_structure:
+    type: wrapper
+    agents: [code_analyzer_agent]
+    params:
+      wrapper: FunctionTool
+      wraps: analyze_code_structure
+      description: |-
+        Analyzes Python code structure using AST parsing.
+
+        This tool parses Python code to extract structural information
+        including functions, classes, imports, and complexity metrics.
+
+        Args:
+            code: Python source code to analyze
+            tool_context: ADK tool context for state management
+
+        Returns:
+            Dictionary containing analysis results and status
+  BuiltInCodeExecutor:
+    type: module
+    params:
+      class: BuiltInCodeExecutor
+  check_code_style:
+    type: wrapper
+    agents: [style_checker_agent]
+    params:
+      wrapper: FunctionTool
+      wraps: check_code_style
+      description: |-
+        Checks code style compliance using pycodestyle (PEP 8).
+
+        Args:
+            code: Python source code to check (or will retrieve from state)
+            tool_context: ADK tool context
+
+        Returns:
+            Dictionary containing style score and issues
+  compile_fix_report:
+    type: wrapper
+    agents: [fix_validator_agent]
+    params:
+      wrapper: FunctionTool
+      wraps: compile_fix_report
+      description: |-
+        Compiles comprehensive report of the fix process.
+
+        Args:
+            tool_context: ADK tool context with all fix pipeline data
+
+        Returns:
+            Comprehensive fix report
+  exit_fix_loop:
+    type: wrapper
+    agents: [fix_validator_agent]
+    params:
+      wrapper: FunctionTool
+      wraps: exit_fix_loop
+      description: Signal that fixing is complete and should exit the loop.
+  save_fix_report:
+    type: wrapper
+    agents: [fix_synthesizer_agent]
+    params:
+      wrapper: FunctionTool
+      wraps: save_fix_report
+      description: |-
+        Saves the fix report as an artifact.
+
+        Args:
+            tool_context: ADK tool context
+
+        Returns:
+            Save status
+  save_grading_report:
+    type: wrapper
+    agents: [feedback_synthesizer_agent]
+    params:
+      wrapper: FunctionTool
+      wraps: save_grading_report
+      description: |-
+        Saves a detailed grading report as an artifact.
+
+        Args:
+            feedback_text: The feedback text to include in the report
+            tool_context: ADK tool context for state management
+
+        Returns:
+            Dictionary containing save status and details
+  search_past_feedback:
+    type: wrapper
+    agents: [feedback_synthesizer_agent]
+    params:
+      wrapper: FunctionTool
+      wraps: search_past_feedback
+      description: |-
+        Search for past feedback in memory service.
+
+        Args:
+            developer_id: ID of the developer (defaults to "default_user")
+            tool_context: ADK tool context with potential memory service access
+
+        Returns:
+            Dictionary containing feedback search results
+  update_grading_progress:
+    type: wrapper
+    agents: [feedback_synthesizer_agent]
+    params:
+      wrapper: FunctionTool
+      wraps: update_grading_progress
+      description: Updates grading progress counters and metrics in state.
+  validate_fixed_style:
+    type: wrapper
+    agents: [fix_validator_agent]
+    params:
+      wrapper: FunctionTool
+      wraps: validate_fixed_style
+      description: |-
+        Validates style compliance of the fixed code.
+
+        Args:
+            tool_context: ADK tool context containing fixed code in state
+
+        Returns:
+            Dictionary with style validation results
+
+teams:
+  code_fix_pipeline:
+    type: sequential
+    agents: [code_fix_pipeline, fix_attempt_loop, fix_synthesizer_agent]
+  code_review_pipeline:
+    type: sequential
+    agents: [code_review_pipeline, code_analyzer_agent, style_checker_agent, test_runner_agent, feedback_synthesizer_agent]
+  fix_attempt_loop:
+    type: loop
+    agents: [fix_attempt_loop, code_fixer_agent, fix_test_runner_agent, fix_validator_agent]
+  root_agent:
+    type: hierarchy
+    agents: [root_agent, code_review_pipeline, code_fix_pipeline]
+
+imports:
+  Agent: google.adk.agents.Agent
+  agent_engines: vertexai.agent_engines
+  analyze_code_structure: code_review_assistant.tools.analyze_code_structure
+  Any: typing.Any
+  ast: ast
+  asyncio: asyncio
+  auth: google.auth
+  BaseSettings: pydantic_settings.BaseSettings
+  BuiltInCodeExecutor: google.adk.code_executors.BuiltInCodeExecutor
+  check_code_style: code_review_assistant.tools.check_code_style
+  code_analyzer_agent: code_analyzer.code_analyzer_agent
+  code_fixer_agent: fix_pipeline.code_fixer.code_fixer_agent
+  compile_fix_report: code_review_assistant.tools.compile_fix_report
+  config: code_review_assistant.config.config
+  datetime: datetime.datetime
+  DefaultCredentialsError: google.auth.exceptions.DefaultCredentialsError
+  Dict: typing.Dict
+  feedback_synthesizer_agent: feedback_synthesizer.feedback_synthesizer_agent
+  Field: pydantic.Field
+  field_validator: pydantic.field_validator
+  fix_synthesizer_agent: fix_pipeline.fix_synthesizer.fix_synthesizer_agent
+  fix_test_runner_agent: fix_pipeline.fix_test_runner.fix_test_runner_agent
+  fix_validator_agent: fix_pipeline.fix_validator.fix_validator_agent
+  FunctionTool: google.adk.tools.FunctionTool
+  hashlib: hashlib
+  instructions_utils: google.adk.utils.instructions_utils
+  io: io
+  json: json
+  List: typing.List
+  logging: logging
+  LoopAgent: google.adk.agents.LoopAgent
+  model_validator: pydantic.model_validator
+  Optional: typing.Optional
+  os: os
+  pycodestyle: pycodestyle
+  ReadonlyContext: google.adk.agents.readonly_context.ReadonlyContext
+  root_agent: code_review_assistant.agent.root_agent
+  save_fix_report: code_review_assistant.tools.save_fix_report
+  save_grading_report: code_review_assistant.tools.save_grading_report
+  search_past_feedback: code_review_assistant.tools.search_past_feedback
+  SequentialAgent: google.adk.agents.SequentialAgent
+  SettingsConfigDict: pydantic_settings.SettingsConfigDict
+  StateKeys: constants.StateKeys
+  style_checker_agent: style_checker.style_checker_agent
+  sys: sys
+  tempfile: tempfile
+  test_runner_agent: test_runner.test_runner_agent
+  ThreadPoolExecutor: concurrent.futures.ThreadPoolExecutor
+  ToolContext: google.adk.tools.ToolContext
+  types: google.genai.types
+  update_grading_progress: code_review_assistant.tools.update_grading_progress
+  validate_fixed_style: code_review_assistant.tools.validate_fixed_style
+
+functions:
+  _calculate_avg_function_length:
+    type: sync
+    module: code_review_assistant.tools
+    args: [tree]
+    params:
+      returns: float
+  _calculate_style_score:
+    type: sync
+    module: code_review_assistant.tools
+    args: [issues]
+    params:
+      returns: int
+  _check_naming_conventions:
+    type: sync
+    module: code_review_assistant.tools
+    args: [tree]
+    params:
+      returns: List[Dict]
+  _extract_code_structure:
+    type: sync
+    module: code_review_assistant.tools
+    args: [tree, code]
+    params:
+      returns: Dict
+  _perform_style_check:
+    type: sync
+    module: code_review_assistant.tools
+    args: [code]
+    params:
+      returns: Dict
+  analyze_code_structure:
+    type: async
+    module: code_review_assistant.tools
+    args: [code, tool_context]
+    params:
+      returns: Dict
+  check_code_style:
+    type: async
+    module: code_review_assistant.tools
+    args: [code, tool_context]
+    params:
+      returns: Dict
+  code_fixer_instruction_provider:
+    type: async
+    module: code_review_assistant.sub_agents.fix_pipeline.code_fixer
+    args: [context]
+    params:
+      returns: str
+  compile_fix_report:
+    type: async
+    module: code_review_assistant.tools
+    args: [tool_context]
+    params:
+      returns: Dict
+  exit_fix_loop:
+    type: sync
+    module: code_review_assistant.sub_agents.fix_pipeline.fix_validator
+    args: [tool_context]
+  feedback_instruction_provider:
+    type: async
+    module: code_review_assistant.sub_agents.review_pipeline.feedback_synthesizer
+    args: [context]
+    params:
+      returns: str
+  fix_synthesizer_instruction_provider:
+    type: async
+    module: code_review_assistant.sub_agents.fix_pipeline.fix_synthesizer
+    args: [context]
+    params:
+      returns: str
+  fix_test_runner_instruction_provider:
+    type: async
+    module: code_review_assistant.sub_agents.fix_pipeline.fix_test_runner
+    args: [context]
+    params:
+      returns: str
+  fix_validator_instruction_provider:
+    type: async
+    module: code_review_assistant.sub_agents.fix_pipeline.fix_validator
+    args: [context]
+    params:
+      returns: str
+  save_fix_report:
+    type: async
+    module: code_review_assistant.tools
+    args: [tool_context]
+    params:
+      returns: Dict
+  save_grading_report:
+    type: async
+    module: code_review_assistant.tools
+    args: [feedback_text, tool_context]
+    params:
+      returns: Dict
+  search_past_feedback:
+    type: async
+    module: code_review_assistant.tools
+    args: [developer_id, tool_context]
+    params:
+      returns: Dict
+  set_google_cloud_project:
+    type: sync
+    module: code_review_assistant.config
+    args: [cls, v]
+    params:
+      returns: Optional[str]
+  style_checker_instruction_provider:
+    type: async
+    module: code_review_assistant.sub_agents.review_pipeline.style_checker
+    args: [context]
+    params:
+      returns: str
+  test_runner_instruction_provider:
+    type: async
+    module: code_review_assistant.sub_agents.review_pipeline.test_runner
+    args: [context]
+    params:
+      returns: str
+  update_grading_progress:
+    type: async
+    module: code_review_assistant.tools
+    args: [tool_context]
+    params:
+      returns: Dict
+  validate_fixed_style:
+    type: async
+    module: code_review_assistant.tools
+    args: [tool_context]
+    params:
+      returns: Dict
+  validate_log_level:
+    type: sync
+    module: code_review_assistant.config
+    args: [cls, v]
+    params:
+      returns: str
+  validate_weights:
+    type: sync
+    module: code_review_assistant.config
+    args: [self]
+
+variables:
+  K_SERVICE:
+    type: env
+    params:
+      caller: [os.getenv]
+      path: [code_review_assistant.config]
+
+files:
+  .py:
+    type: literal
+    actions: [write]
+    params:
+      caller: [tempfile.NamedTemporaryFile]
+      mode: w
+      delete: "False"
+  tmp_path:
+    type: variable
+    actions: [read, delete]
+    params:
+      caller: [os.path.exists, os.unlink]
